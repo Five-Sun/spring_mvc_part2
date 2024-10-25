@@ -6,6 +6,7 @@ import hello.login.web.item.form.ItemSaveForm;
 import hello.login.web.item.form.ItemUpdateForm;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
@@ -22,6 +23,8 @@ import java.util.List;
 public class ItemController {
 
     private final ItemRepository itemRepository;
+
+    private final ApplicationContext ac;
 
     @GetMapping
     public String items(Model model) {
