@@ -191,3 +191,126 @@ Thymeleaf는 최신 HTML5 JVM웹 개발에 이상적이다.
 웹 페이지를 개발할 때는 공통 영역이 많이 있다. 예를 들어서 상단 영역이나 하단 영역, 좌측 카테고리 등등 여러 페이지에서 함께 사용하는 영역들이 있다.
 이런 부분을 복사해서 사용한다면 변경시 여러 페이지를 다 수정해야 하므로 상당히 비효율 적이다. 타임리프는 문제 해결을 위해 템플릿 조각과 레이아웃 기능을 지원한다.
 
+## 2. 타임리프 - 스프링 통합과 폼
+
+### 타임리프 스프링 통합
+타임리프는 스프링 없이도 동작하지만, 스프링 통합을 위한 다양한 기능을 편리하게 제공한다. 
+그리고 이런 부분은 스프링으로 백엔드를 개발하는 개발자 입장에서 타임리프를 선택하는 하나의 이유가 된다.
+
+#### 스프링 통합으로 추가되는 기능들
+* 스프링의 SpringEL 문법 통합
+* ${@myBean.doSomething()} 처럼 스프링 빈 호출 지원
+* 편리한 폼 관리를 위한 추가 속성
+  * th:object (기능 강화, 폼 커맨드 객체 선택)
+  * th:field , th:errors , th:errorclass
+* 폼 컴포넌트 기능
+  * checkbox, radio button, List 등을 편리하게 사용할 수 있는 기능 지원
+* 스프링의 메시지, 국제화 기능의 편리한 통합
+* 스프링의 검증, 오류 처리 통합
+* 스프링의 변환 서비스 통합(ConversionService)
+
+#### 설정 방법
+타임리프 템플릿 엔진을 스프링 빈에 등록하고, 타임리프용 뷰 리졸버를 스프링 빈으로 등록하면 된다.
+
+스프링 부트는 이런 부분 모두 자동화 해준다. `build.gradle`에 `implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'`
+넣어주면 Gradle은 타임리프와 관련된 라이브러리를 다운로드 받고, 자동으로 등록해준다.
+
+타임리프 관련 설정을 변경하고 싶으면 `application.properties`에 추가하여 변경하면 된다.
+
+### 입력 폼 처리
+타임리프가 제공하는 입력 폼 기능을 적용하면 폼 코드를 타임리프가 지원하는 기능을 사용해서 효율적으로 개선할 수 있다.
+* `th:object`: 커맨드 객체를 지정한다.
+* `*{...}`: 선택 변수 식이라고 한다. th:object 에서 선택한 객체에 접근한다.
+* `th:field`
+  * HTML 태그의 id , name , value 속성을 자동으로 처리해준다.
+
+#### 렌더링 전
+`<input type="text" th:field="*{itemName}" />`
+
+#### 렌더링 후
+`<input type="text" id="itemName" name="itemName" th:value="*{itemName}" />`
+
+### 체크 박스 - 단일
+HTML에서 체크 박스를 선택하지 않고 폼을 전송하면 필드 자체가 서버로 전송되지 않는다.
+
+체크 해제를 인식하기 위한 히든 필드를 추가한다.
+`<input type="hidden" name="_open" value="on"/>`
+
+```html
+<!-- single checkbox -->
+<div>판매 여부</div>
+<div>
+   <div class="form-check">
+     <input type="checkbox" id="open" name="open" class="form-check-input">
+     <input type="hidden" name="_open" value="on"/> <!-- 히든 필드 추가 -->
+     <label for="open" class="form-check-label">판매 오픈</label>
+   </div>
+</div>
+```
+
+체크 박스를 체크하면 스프링 MVC가 `open`에 값이 있는 것을 확인하고 `_open`은 무시한다.
+
+체크 박스를 체크하지 않으면 스프링 MVC가 `_open`만 있는 것을 확인하고 `open`의 값이 체크되지 않았다고 인식한다.
+
+이 경우 서버에서 결과가 `null`이 아니라 `false`인 것을 확인할 수 있다.
+
+개발할 때마다 이렇게 필드를 추가하는 것은 상당히 번거롭기 때문에 타임리프가 제공하는 폼 기능을 사용하면 이런 부분을 자동으로 처리할 수 있다.
+```html
+<!-- single checkbox -->
+<div>판매 여부</div>
+<div>
+  <div class="form-check">
+    <input type="checkbox" id="open" th:field="*{open}" class="form-checkinput">
+    <label for="open" class="form-check-label">판매 오픈</label>
+  </div>
+</div>
+```
+HTML을 생성하게 되면 히든 필드 부분을 자동으로 생성해준다.
+
+### 체크 박스 - 멀티
+
+#### @ModelAttribute
+`@ModelAttribute` 어노테이션은 컨트롤러에 있는 별도의 메서드에 적용할 수 있다.
+이렇게 하면 해당 컨트롤러 요청할 때 세팅되어 있는 값이 자동으로 모델에 담기게 된다.
+
+```html
+<!-- multi checkbox -->
+<div>
+ <div>등록 지역</div>
+ <div th:each="region : ${regions}" class="form-check form-check-inline">
+   <input type="checkbox" th:field="*{regions}" th:value="${region.key}" class="form-check-input">
+   <label th:for="${#ids.prev('regions')}" th:text="${region.value}" class="form-check-label">서울</label>
+ </div>
+</div>
+```
+`th:for="${#ids.prev('regions')}"`
+멀티 체크박스는 같은 이름의 여러 체크박스를 만든다. HTML 태그 속성에서 `name`은 같아도 되지만 `id`는 모두 달라야 한다.
+따라서 타임리프는 체크박스를 `each` 루프 안에서 반복할 때는 임의로 `1,2,3` 숫자를 뒤에 붙여준다.
+
+### 라디오 버튼
+```html
+<!-- radio button -->
+<div>
+ <div>상품 종류</div>
+ <div th:each="type : ${itemTypes}" class="form-check form-check-inline">
+   <input type="radio" th:field="*{itemType}" th:value="${type.name()}" class="form-check-input">
+   <label th:for="${#ids.prev('itemType')}" th:text="${type.description}" class="form-check-label">
+   BOOK</label>
+ </div>
+</div>
+```
+위 코드에서, `th:field="*{itemType}"`를 설정하면 Spring MVC에서 `itemType`에 저장된 값과 일치하는 radio 버튼이 자동으로 선택됩니다.
+
+### 셀렉트 박스
+```html
+```html
+<!-- SELECT -->
+<div>
+ <div>배송 방식</div>
+    <select th:field="*{deliveryCode}" class="form-select">
+    <option value="">==배송 방식 선택==</option>
+    <option th:each="deliveryCode : ${deliveryCodes}" th:value="${deliveryCode.code}" th:text="${deliveryCode.displayName}">FAST</option>
+    </select>
+</div>
+```
+
