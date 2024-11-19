@@ -314,3 +314,551 @@ HTML을 생성하게 되면 히든 필드 부분을 자동으로 생성해준다
 </div>
 ```
 
+## 3. 메시지, 국제화
+
+### 소개
+
+#### 메시지
+'상품명'이라는 단어를 모두 '상품이름'으로 고쳐달라고 하면 어떻게 해야할까?
+여러 화면에 보이는 상품명이 하드코딩 되어 있다면 모든 화면을 찾아가서 변경을 해야한다.
+이런 다양한 메시지를 한 곳에서 관리하도록 하는 기능을 메시지 기능이라고 한다.
+
+`messages.properties`라는 메시지 관리용 파일을 만들고 각 HTML들은 해당 데이터를 key 값으로 불러서 사용하는 방식이다.
+```html
+-- messages.properties
+item=상품
+item.id=상품 ID
+item.itemName=상품명
+item.price=가격
+item.quantity=수량
+
+-- HTML
+<label for="itemName" th:text="#{item.itemName}"></label>
+<label for="itemName" th:text="#{item.itemName}"></label>
+```
+#### 국제화
+메시지에서 한달 더 나아가 메시지에서 설명한 메시지 파일을 각 나라별로 별도록 관리하면 서비스를 국제화 할 수 있다.
+```
+-- messages_en.properties
+item=Item
+item.id=Item ID
+item.itemName=Item Name
+item.price=price
+item.quantity=quantity
+
+-- messages_ko.properties
+item=상품
+item.id=상품 ID
+item.itemName=상품명
+item.price=가격
+item.quantity=수량
+```
+이렇게 하면 간편하게 사이트를 국제화 할 수 있다.
+한국에서 접근한 것인지 영어에서 접근한 것인지 인식하는 방법은 HTTP `accept-language` 헤더 값을 사용하거나
+사용자가 직접 언어를 선택하도록 하고, 쿠키 등을 사용해서 처리할 수 있다.
+
+
+메시지와 국제화 기능을 직접 구현할 수도 있겠지만, 스프링은 기본적으로 메시지와 국제화 기능을 모두 제공한다.
+그리고 타임리프도 스프링이 제공하는 메시지와 국제화 기능을 편리하게 통합해서 제공한다.
+
+
+### 스프링 메시지 소스 설정
+메시지 관리 기능을 사용하려면 스프링이 제공하는 `MessageSource`를 스프링 빈으로 등록하면 되는데
+`MessageSource`는 인터페이스이다. 따라서 구현체인 `ResourceBundleMessageSource`를 스프링 빈으로 등록하면 된다.
+
+#### 직접 등록
+
+```java
+
+@Bean
+public MessageSource messageSource() {
+  ResourceBundleMessageSource messageSource = new ResourceBundleMessageSource();
+  messageSource.setBasenames("messages", "errors");
+  messageSource.setDefaultEncoding("utf-8");
+  return messageSource;
+}
+```
+- `basenames`: 설정 파일의 이름을 지정한다. 
+  - 추가로 국제화 기능을 적용하려면 파일명 마지막에 언어 정보`_ko`, `_en` 등을 주면된다.
+  - 만약 찾을 수 있는 국제화 파일이 없으면 `messages.properties`를 기본으로 사용한다.  
+
+#### 스프링 부트
+스프링 부트를 사용하면 스프링 부트가 `MessageSource`를 자동으로 스프링 빈으로 등록한다.
+
+스프링 부트를 사용하면 다음과 같이 메시지 소스를 설정할 수 있다.
+```
+-- application.properties
+1. 스프링 부트 메시지 소스 설정
+spring.messages.basename=messages,config.i18n.messages
+2. 스프링 부트 메시지 소스 기본 값
+spring.messages.basename=messages
+```
+`MessageSource`를 스프링 빈으로 등록하지 않고 스프링 부트와 관련된 별도의 설정을 하지 않으면
+`messages`라는 이름으로 기본 등록된다. 따라서 `messages_en.properties`, `messages_ko.properties`, `messages.properties` 파일만 등록하면 자동으로 인식된다.
+
+### 스프링 메시지 소스 사용
+
+#### MessageSource 인터페이스
+```java
+public interface MessageSource {
+  String getMessage(String code, @Nullable Object[] args, @Nullable String
+          defaultMessage, Locale locale);
+  String getMessage(String code, @Nullable Object[] args, Locale locale)
+          throws NoSuchMessageException;
+}
+```
+인터페이스를 보면 코드를 포함한 일부 파라미터로 메시지를 읽어오는 기능을 제공한다.
+
+#### 국제화 파일 선택
+locale 정보를 기반으로 국제화 파일을 선택한다.
+- `Locale`이 `en_US`의 경우 다음 순서로 찾는다.
+  1. `messages_en_US`
+  2. `messages_en`
+  3. `messages`
+- `Locale`에 맞추어 구체적인 것이 있으면 구체적인 것을 찾고, 없으면 디폴트를 찾는다고 이해하면 된다.
+- `Locale` 정보가 없는 경우 `Locale.getDefault()` 을 호출해서 시스템의 기본 로케일을 사용합니다.
+
+### 스프링의 국제화 메시지 선택
+메시지 기능은 `Locale` 정보를 알아야 언어를 선택할 수 있다.
+결국 스프링도 `Locale` 정보를 알아야 언어를 선택할 수 있는데, 스프링은 언어 선택시 기본으로 `Accept-Language` 헤더의 값을 사용한다.
+
+#### LocaleResolver
+스프링은 `Locale` 선택 방식을 변경할 수 있도록 `LocaleResolver` 라는 인터페이스를 제공한다.
+스프링 부트는 기본으로 `Accept-Language`를 활용하는 `AcceptHeaderLocaleResolver`를 사용한다.
+
+#### LocaleResolver 인터페이스
+```java
+public interface LocaleResolver {
+    Locale resolveLocale(HttpServletRequest request);
+    void setLocale(HttpServletRequest request, @Nullable HttpServletResponse
+          response, @Nullable Locale locale);
+}
+```
+#### LocaleResolver 변경
+만약 `Locale` 선택 방식을 변경하려면 `LocaleResolver`의 구현체를 변경해서 쿠키나 세션 기반의 선택 기능을 사용할 수 있다.
+예를 들어 고객이 직접 `Locale`을 선택하도록 하는 것이다. 관련한 내용은 검색을 통해 수 많은 예제가 나오니 참고하자.
+
+## 4. 검증 - Validation
+
+지금까지 만든 웹 애플리케이션은 폼 입력시 숫자를 문자로 작성하거나해서 검증 오류가 발생하면
+오류 화면으로 바로 이동한다. 이렇게 되면 사용자는 처음부터 해당 폼으로 다시 이동해서 입력을 해야 한다.
+이런 서비스라면 사용자는 금방 모두 떠나버릴 것이다. 웹 서비스는 오류가 발생하면, 고객에게 어떤 오류가 발생햇는지 친절하게 알려주어야 한다.
+
+**컨트롤러의 중요한 역할 중 하나는 HTTP 요청이 정상인지 검증하는 것이다.** 
+그리고 정상 로직보다 이런 검증 로직을 잘 개발하는 것이 어쩌면 더 어려울 것이다.
+
+#### 참고: 클라이언트 검증, 서버 검증
+- 클라이언트 검증은 조작할 수 있으므로 보안에 취약하다.
+- 서버만으로 검증하면, 즉각적인 고객 사용성이 부족해진다.
+- 둘을 적절히 섞어서 사용하되, 최종적으로 서버 검증은 필수이다.
+- API 방식을 사용하면 API 스펙을 잘 정의해서 검증 오류를 API 응답 결과에 잘 남겨주어야 한다.
+
+### 검증 직접 처리 - 소개
+![img.png](img.png)
+![img_1.png](img_1.png)
+고객이 상품 등록 폼에서 검증 범위를 넘어서면, 서버 검증 로직이 실패해야 한다.
+이렇게 검증에 실패한 경우 고객에게 다시 상품 등록 폼을 보여주고, 어떤 값을 잘못 입력했는지 친절하게 알려주어야 한다.
+
+### 검증 직접 처리 - 개발
+
+```java
+//검증 오류 결과를 보관
+Map<String, String> errors = new HashMap<>();
+
+//검증 로직
+if (!StringUtils.hasText(item.getItemName())) {
+        errors.put("itemName", "상품 이름은 필수입니다.");
+}
+
+//복합 검증 로직
+if (item.getPrice() != null && item.getQuantity() != null) {
+    int resultPrice = item.getPrice() * item.getQuantity();
+    if (resultPrice < 10000) {
+        errors.put("globalError", "가격 * 수량의 합은 10,000원 이상이어야 합니다. 현재 값 = " + resultPrice);
+    }
+}
+
+//검증 실패
+if (!errors.isEmpty()) {
+    model.addAttribute("errors", errors);
+    return "validation/v1/addForm";
+}
+
+//검증 성공
+Item savedItem = itemRepository.save(item);
+redirectAttributes.addAttribute("itemId", savedItem.getId());
+redirectAttributes.addAttribute("status", true);
+return "redirect:/validation/v1/items/{itemId}";
+```
+#### 정리
+- 만약 검증 오류가 발생하면 입력 폼을 다시 보여준다.
+- 검증 오류들을 고객에게 친절하게 안내해서 다시 입력할 수 있게 한다.
+- 검증 오류가 발생해도 고객이 입력한 데이터가 유지된다.
+
+#### 남은 문제점
+- 뷰 템플릿에 중복 처리가 많다.
+- 타입 오류 처리가 안된다. 숫자 필드는 타입이 `Integer`이므로 문자 타입으로 설정하는 것이 불가능하다. 그런데 이러한 오류는 스프링 MVC에서 컨트롤러에 진입하기도 전에 예외가 발생하기 때문에, 컨트롤러가 호출되지도 않고, 400 예외가 발생하면서 오류 페이지를 띄워준다.
+- 타입 오류가 발생해도 고객이 입력한 문자를 화면에 남겨야 한다.
+- 결국 고객이 입력한 값도 어딘가에 별도로 관리가 되어야 한다.
+
+### BindingResult1
+스프링이 제공하는 검증 오류 처리 방법을 알아보자.
+핵심은 `BindingResult`이다.
+
+우선 코드로 확인을 해보자.
+```java
+public String addItemV1(@ModelAttribute Item item, BindingResult bindingResult,
+                        RedirectAttributes redirectAttributes) {
+    //검증 로직
+  if (!StringUtils.hasText(item.getItemName())) {
+    bindingResult.addError(new FieldError("item", "itemName", "상품 이름은 필수입니다."));\
+    
+   //복합 검증 로직 
+    if (item.getPrice() != null && item.getQuantity() != null) {
+      int resultPrice = item.getPrice() * item.getQuantity();
+      if (resultPrice < 10000) {
+        bindingResult.addError(new ObjectError("item", "가격 * 수량의 합은
+                10,000원 이상이어야 합니다. 현재 값 = " + resultPrice));
+      }
+    }
+    
+    //검증 실패
+    if (bindingResult.hasErrors()) {
+      log.info("errors={}", bindingResult);
+      return "validation/v2/addForm";
+    }
+    
+    //검증 성공
+    Item savedItem = itemRepository.save(item);
+    redirectAttributes.addAttribute("itemId", savedItem.getId());
+    redirectAttributes.addAttribute("status", true);
+    return "redirect:/validation/v2/items/{itemId}";
+}
+```
+#### FieldError 생성자 요약
+```java
+public FieldError(String objectName, String field, String defaultMessage) {}
+```
+#### 글로벌 오류 - ObjectError 생성자 요약
+```java
+public ObjectError(String objectName, String defaultMessage) {}
+```
+특정 필드를 넘어서는 오류가 있으면 `ObjectError` 객체를 생성해서 `bindingResult`에 담아두면 된다.
+- `objectName`: @ModelAttribute의 이름
+- `defaultMessage`: 오류 기본 메시지
+
+### BindingResult2
+- 스프링이 제공하는 검증 오류를 보관하는 객체이다. 검증 오류가 발생하면 여기에 보관하면 된다.
+- `BindingResult`가 있으면 `@ModelAttribute`에 데이터 바인딩 시 오류가 발생해도 컨트롤러가 호출된다.(타입 오류 해결)
+
+#### BindingResult에 검증 오류를 적용하는 3가지 방법
+- `@ModelAttribute`의 객체에 타입 오류 등으로 바인딩이 실패하는 경우 스프링이 `FieldError` 생성해서 `BindingResult`에 넣어준다.
+- 개발자가 직접 넣어준다.
+- `Validator` 사용
+
+`BindingResult`는 인터페이스이고, `Error` 인터페이스를 상속받고 있다.
+
+실제 넘어오는 구현체는 `BeanPropertyBindingResult`라는 것인데, 둘다 구현하고 있으므로 둘다 사용이 가능하다.
+
+`Error` 인터페이스는 단순한 오류 저장과 조회 기능을 제공하고 `BindingResult`는 여기에 더해서 추가적인 기능들을 제공한다.
+`addError()`도 `BindingResult`가 제공하므로 여기서는 `BindingResult`를 사용하자. 주로 관례상 `BindingResult`를 많이 사용한다.
+
+### FieldError, ObjectError
+
+#### FiledError 생성자
+```java
+public FieldError(String objectName, String field, String defaultMessage);
+public FieldError(String objectName, String field, @Nullable Object
+rejectedValue, boolean bindingFailure, @Nullable String[] codes, @Nullable
+Object[] arguments, @Nullable String defaultMessage)
+```
+* `objectName` : 오류가 발생한 객체 이름
+* `field` : 오류 필드
+* `rejectedValue` : 사용자가 입력한 값(거절된 값)
+* `bindingFailure` : 타입 오류 같은 바인딩 실패인지, 검증 실패인지 구분 값
+* `codes` : 메시지 코드
+* `arguments` : 메시지에서 사용하는 인자
+* `defaultMessage` : 기본 오류 메시지
+
+`ObjectError`도 유사하게 두 가지 생성자를 제공한다.
+
+### 오류 코드와 메시지 처리1
+`FieldError`, `ObjectError`의 생성자는 `code`,`argument`를 제공한다.
+오류 메시지를 체계적으로 다루기 위해서 오류 발생시 오류코드로 메시지를 찾기 위해 사용된다.
+
+`messages.properties`를 사용해도 되지만, 오류 메시지를 구분하기 쉽게 `errors.properties`라는 별도의 파일로 관리한다.
+
+#### 사용 예시
+```java
+//range.item.price=가격은 {0} ~ {1} 까지 허용합니다.
+new FieldError("item", "price", item.getPrice(), false, new String[]
+    {"range.item.price"}, new Object[]{1000, 1000000})
+```
+
+실행해보면 메시지, 국제화에서 학습한 `MessageSource`를 찾아서 메시지를 조회하는 것을 확인할 수 있다.
+
+### 오류 코드와 메시지 처리2
+`FieldError`, `ObjectError`는 다루기 너무 번거로운데 오류 코드도 좀 더 자동화 할 수 있지 않을까?
+
+컨트롤러에서 `BindingResult`는 검증해야 할 객체인 `target` 바로 다음에 온다. 
+따라서 `BindingResult`는 이미 본인이 검증해야 할 객체인 `target`을 알고 있다.
+
+#### rejectValue(), reject()
+`BindingResult` 가 제공하는 `rejectValue()`, `reject()` 를 사용하면 `FieldError`, `ObjectError` 를 직
+접 생성하지 않고, 깔끔하게 검증 오류를 다룰 수 있다.
+
+#### rejectValue(), reject()
+```java
+void rejectValue(@Nullable String field, String errorCode,
+    @Nullable Object[] errorArgs, @Nullable String defaultMessage);
+
+void reject(String errorCode, @Nullable Object[] errorArgs, @Nullable String
+    defaultMessage);
+
+bindingResult.rejectValue("price", "range", new Object[]{1000, 1000000}, null)
+```
+* `field` : 오류 필드명
+* `errorCode` : 오류 코드(이 오류 코드는 메시지에 등록된 코드가 아니다. 뒤에서 설명할 messageResolver를 위한 오류 코드이다.)
+* `errorArgs` : 오류 메시지에서 {0} 을 치환하기 위한 값
+* `defaultMessage` : 오류 메시지를 찾을 수 없을 때 사용하는 기본 메시지
+
+#### 축약된 오류 코드
+`FieldError()`를 직접 다룰 때는 오류코드를 `range.item.price`와 같이 모두 입력했다.
+그런데 `rejectValue()`를 사용하고 부터는 오류 코드를 `range`로 간단하게 입력했다.
+그래도 오류 메시지를 잘 찾아서 출력한다. 무언가 규칙이 존재한다. 이 부분을 이해하려면 `MessageCodesResolver`를 이해해야 한다.
+
+### 오류 코드와 메시지 처리3
+오류 코드를 만들 때 다음과 같이 자세히 만들 수도 있다.
+```
+required.item.itemName: 상품 이름은 필수 입니다.
+range.item.price: 상품의 가격 범위 오류 입니다.
+```
+또는 다음과 같이 단순하게 만들 수도 있다.
+```
+required : 필수 값 입니다.
+range : 범위 오류 입니다.
+```
+
+단순하게 만들면 범용성이 좋아서 여러곳에서 사용할 수 있지만, 메시지를 세밀하게 작성하기 어렵다.
+반대로 너무 자세하게 만들면 범용성이 떨어진다. 가장 좋은 방법은 범용성으로 사용하다가, 세밀하게 작성해야 하는 경우에는
+세밀한 내용이 적용되도록 메시지에 단계를 두는 방법이다.
+
+스프링은 `MessageCodesResolver` 라는 것으로 이러한 기능을 지원한다.
+
+### 오류 코드와 메시지 처리4
+```
+#Level1
+required.item.itemName: 상품 이름은 필수 입니다.
+
+#Level2
+required: 필수 값 입니다.
+```
+#### MessageCodesResolver
+- 검증 오류 코드로 메시지 코드들을 생성한다.
+- `MessageCodesResolver` 인터페이스이고 `DefaultMessageCodesResolver`는 기본 구현체이다.
+- 주로 다음과 함계 사용한다. `OjbectError`, `FieldError`
+
+#### DefaultMessageCodesResolver의 기본 메시지 생성 규치
+```
+- 객체 오류
+객체 오류의 경우 다음 순서로 2가지 생성
+1.: code + "." + object name
+2.: code
+
+예) 오류 코드: required, object name: item
+1.: required.item
+2.: required
+
+- 필드 오류
+필드 오류의 경우 다음 순서로 4가지 메시지 코드 생성
+1.: code + "." + object name + "." + field
+2.: code + "." + field
+3.: code + "." + field type
+4.: code
+
+예) 오류 코드: typeMismatch, object name: "user", field: "age", field type: int
+1. "typeMismatch.user.age"
+2. "typeMismatch.age"
+3. "typeMismatch.int"
+4. "typeMismatch"
+```
+타임리프 화면을 렌더링 할 때 `th:errors`가 실행된다.
+만약 이때 오류가 있다면 생성된 오류 메시지 코드를 순서대로 돌아가면서 메시지를 찾는다. 
+그리고 없으면 디폴트 메시지를 출력한다.
+
+### 오류 코드와 메시지 처리5
+
+####오류 코드 관리 전략
+**핵심은 구체적인 것에서! 덜 구체적인 것으로!**
+
+`MessageCodesResolver` 는 `required.item.itemName` 처럼 구체적인 것을 먼저 만들어주고, `required` 처
+럼 덜 구체적인 것을 가장 나중에 만든다.
+이렇게 하면 앞서 말한 것 처럼 메시지와 관련된 공통 전략을 편리하게 도입할 수 있다
+
+**왜 이렇게 복잡하게 사용하는가?**
+
+모든 오류 코드에 대해서 메시지를 각각 다 정의하면 개발자 입장에서 관리하기 너무 힘들다.
+크게 중요하지 않은 메시지는 범용성 있는 `requried` 같은 메시지로 끝내고, 정말 중요한 메시지는 꼭 필요할 때 구체
+적으로 적어서 사용하는 방식이 더 효과적이다.
+
+### 오류 코드와 메시지 처리6
+
+#### 스프링이 직접 만든 오류 메시지 처리
+검증 오류 코드는 다음과 같이 2가지로 나눌 수 있다.
+- 개발자가 직접 설정한 오류 코드 -> `rejectValue()`를 직접 호출
+- 스프링이 직접 검증 오류에 추가한 경우(주로 타입 정보가 맞지 않음)
+
+`Integer` 필드에 문자 `"A"`를 입력하면 `BindingResult`에 `FieldError`가 담겨있다.
+다음과 같은 메시지 코드들이 생성된 것을 확인할 수 있다.
+`codes[typeMismatch.item.price,typeMismatch.price,typeMismatch.java.lang.Integer,ty
+peMismatch]`
+
+다음과 같이 4가지 메시지 코드가 입력되어 있다.
+* `typeMismatch.item.price`
+* `typeMismatch.price`
+* `typeMismatch.java.lang.Integer`
+* `typeMismatch`
+
+위와 같은 코드를 이용해서 `errors.properteis`에 추가한다.
+```
+#추가
+typeMismatch.java.lang.Integer=숫자를 입력해주세요.
+typeMismatch=타입 오류입니다.
+```
+결과적으로 소스코드를 하나도 건들지 않고, 원하는 메시지를 단계별로 설정할 수 있다.
+
+### Validator 분리1
+컨트롤러에서 검증 로직이 차지하는 부분은 매우 크다. 이런 경우 별도의 클래스로 역할을 분리하는 것이 좋다.
+그리고 이렇게 분리한 검증 로직을 재사용할 수도 있다.
+
+**예시**
+```java
+package hello.itemservice.web.validation;
+import hello.itemservice.domain.item.Item;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.Errors;
+import org.springframework.validation.ValidationUtils;
+import org.springframework.validation.Validator;
+
+@Component
+public class ItemValidator implements Validator {
+  @Override
+  public boolean supports(Class<?> clazz) {
+    return Item.class.isAssignableFrom(clazz);
+  }
+  @Override
+  public void validate(Object target, Errors errors) {
+    Item item = (Item) target;
+    ValidationUtils.rejectIfEmptyOrWhitespace(errors, "itemName", "required");
+    if (item.getPrice() == null || item.getPrice() < 1000 || item.getPrice() > 1000000) {
+        errors.rejectValue("price", "range", new Object[]{1000, 1000000}, null);
+    }
+    if (item.getQuantity() == null || item.getQuantity() > 10000) {
+        errors.rejectValue("quantity", "max", new Object[]{9999}, null);
+    }
+    //특정 필드 예외가 아닌 전체 예외
+    if (item.getPrice() != null && item.getQuantity() != null) {
+        int resultPrice = item.getPrice() * item.getQuantity();
+        if (resultPrice < 10000) {
+            errors.reject("totalPriceMin", new Object[]{10000, resultPrice}, null);
+        }
+    }
+  }
+}
+```
+```java
+private final ItemValidator itemValidator;
+
+@PostMapping("/add")
+public String addItemV5(@ModelAttribute Item item, BindingResult bindingResult,
+RedirectAttributes redirectAttributes) {
+    
+  itemValidator.validate(item, bindingResult);
+  
+  if (bindingResult.hasErrors()) {
+    log.info("errors={}", bindingResult);
+    return "validation/v2/addForm";
+  }
+  //성공 로직
+  Item savedItem = itemRepository.save(item);
+  redirectAttributes.addAttribute("itemId", savedItem.getId());
+  redirectAttributes.addAttribute("status", true);
+  return "redirect:/validation/v2/items/{itemId}";
+}
+```
+
+스프링은 검증을 체계적으로 제공하기 위해 `Validator` 인터페이스를 제공한다.
+```java
+public interface Validator {
+  boolean supports(Class<?> clazz);
+  void validate(Object target, Errors errors);
+}
+```
+- `support() {}`: 해당 검증기를 지원하는 여부 확인
+- `validate(Object target, Errors errors)`: 검증 대상 객체와 BindingResult
+
+`ItemValidator`를 스프링 빈으로 주입 받아서 직접 호출했다.
+
+실행해보면 기존과 완전히 동일하게 동작하는 것을 알 수 있다.
+
+### Validator 분리2
+스프링이 `Validator` 인터페이스를 별도로 제공하는 이유는 체계적으로 검증 기능을 도입하기 위해서다.
+그런데 앞에서처럼 검증기를 직접 불러서 사용해도 되지만 `Validator` 인터페이스를 사용해서 검증기를 만들면 스프링의 추가적인 도움을 받을 수 있다.
+
+#### WebDataBinder를 통해서 사용하기
+`WebDataBinder`는 스프링의 파라미터 바인딩의 역할을 해주고 검증 기능도 내부에 포함한다.
+
+```java
+@InitBinder
+public void init(WebDataBinder dataBinder) {
+  log.info("init binder {}", dataBinder);
+  dataBinder.addValidators(itemValidator);
+} 
+```
+이렇게 `WebDataBinder`에 검증기를 추가하면 해당 컨트롤러에서는 검증기를 자동으로 적용할 수 있다.
+`@InitBinder` -> 해당 컨트롤러에만 영향을 준다. 글로벌 설정은 별도로 해야한다.
+validator를 직접 호출하는 부분이 사라지고, 대신에 검증 대상 앞에 `@Validated`가 붙었다.
+
+**예시**
+```java
+@PostMapping("/add")
+public String addItemV6(@Validated @ModelAttribute Item item, BindingResult
+bindingResult, RedirectAttributes redirectAttributes) {
+  if (bindingResult.hasErrors()) {
+    log.info("errors={}", bindingResult);
+     return "validation/v2/addForm";
+  }
+  //성공 로직
+  Item savedItem = itemRepository.save(item);
+  redirectAttributes.addAttribute("itemId", savedItem.getId());
+  redirectAttributes.addAttribute("status", true);
+  return "redirect:/validation/v2/items/{itemId}";
+}
+```
+
+#### 글로벌 설정 - 모든 컨트롤러에 다 적용
+```java
+@SpringBootApplication
+public class ItemServiceApplication implements WebMvcConfigurer {
+  public static void main(String[] args) {
+    SpringApplication.run(ItemServiceApplication.class, args);
+  }
+  @Override
+  public Validator getValidator() {
+    return new ItemValidator();
+  }
+}
+```
+이렇게 글로벌 설정을 추가할 수 있다. 기존 컨트롤러의 `@InitBinder`를 제거해도 글로벌 설정으로 정상 동작하는 것을 확인할 수 있다.
+
+글로벌 설정을 하면 다음에 `BeanValidator`가 자동 등록되지 않는다.
+글로벌 설정 부분은 주석처리 해두자. 참고로 글로벌 설정을 직접 사용하는 경우는 드물다.
+
+#### 참고
+검증시 `@Validated` `@Valid` 둘다 사용가능하다.
+`javax.validation.@Valid` 를 사용하려면 `build.gradle` 의존관계 추가가 필요하다.
+`implementation 'org.springframework.boot:spring-boot-starter-validation'`
+
+`@Validated` 는 스프링 전용 검증 애노테이션이고, `@Valid` 는 자바 표준 검증 애노테이션이다.
+
+## 5. 검증2 - Bean Validation
