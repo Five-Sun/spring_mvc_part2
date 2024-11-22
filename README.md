@@ -454,8 +454,8 @@ public interface LocaleResolver {
 - API 방식을 사용하면 API 스펙을 잘 정의해서 검증 오류를 API 응답 결과에 잘 남겨주어야 한다.
 
 ### 검증 직접 처리 - 소개
-![img.png](img.png)
-![img_1.png](img_1.png)
+![img.png](img/img.png)
+![img_1.png](img/img_1.png)
 고객이 상품 등록 폼에서 검증 범위를 넘어서면, 서버 검증 로직이 실패해야 한다.
 이렇게 검증에 실패한 경우 고객에게 다시 상품 등록 폼을 보여주고, 어떤 값을 잘못 입력했는지 친절하게 알려주어야 한다.
 
@@ -862,3 +862,219 @@ public class ItemServiceApplication implements WebMvcConfigurer {
 `@Validated` 는 스프링 전용 검증 애노테이션이고, `@Valid` 는 자바 표준 검증 애노테이션이다.
 
 ## 5. 검증2 - Bean Validation
+
+### Bean Validation - 소개
+검증 기능을 매번 코드로 작성하는 것은 상당히 번거롭다. 
+특히 특정 필드에 대한 검증 로직은 대부분 빈 값인지 아닌지, 특정 크기를 넘는지 아닌지와 같이 매우 일반적인 로직이다.
+
+```java
+public class Item {
+  private Long id;
+  
+  @NotBlank
+  private String itemName;
+  
+  @NotNull
+  @Range(min = 1000, max = 1000000)
+  private Integer price;
+  
+  @NotNull
+  @Max(9999)
+  private Integer quantity;
+  //...
+}
+```
+이런 검증 로직을 모든 프로젝트에 적용할 수 있게 공통화하고, 표준화 한 것이 바로 Bean Validation이다.
+Bean Validation을 잘 활용하면, 애노테이션 하나로 검증 로직을 매우 편리하게 적용할 수 있다.
+#### Bean Validation이란?
+Bean Validation은 특정한 구현체가 아니라 Bean Validation 2.0(JSR-380)이라는 기술 표준이다.
+쉽게 이야기해서 검증 애노테이션과 여러 인터페이스의 모음이다. 마치 JPA가 표준 기술이고 그 구현체로 하이버네이트가 있는 것고 ㅏ같다.
+
+Bean Validation을 구현한 기술중에 일반적으로 사용하는 구현체는 하이버네이트 Validator이다.
+이름이 하이버네이트가 붙어서 그렇지만 ORM과는 관련이 없다.
+
+### Bean Validation - 시작
+Bean Validation을 사용하려면 의존 관계를 추가해야 한다.
+```java
+implementation 'org.springframework.boot:spring-boot-starter-validation'
+```
+#### Jakarta Bean Validation
+- `jakarta.validation-api`: Bean Validation 인터페이스
+- `hibernate-validator`: 구현체
+
+#### 검증 애노테이션
+- `@NotBlank` : 빈값 + 공백만 있는 경우를 허용하지 않는다.
+- `@NotNull` : null 을 허용하지 않는다.
+- `@Range(min = 1000, max = 1000000)` : 범위 안의 값이어야 한다.
+- `@Max(9999)` : 최대 9999까지만 허용한다
+
+**스프링은 이미 개발자를 위해 빈 검증기를 스프링에 완전히 통합해두었다.**
+
+### Bean Validation - 스프링 적용
+
+#### 스프링 MVC는 어떻게 Bean Validator를 사용할까?
+스프링 부트가 spring-boot-starter-validation 라이브러리를 넣으면 자동으로 Bean Validator를 인지하고 스프링에 통합한다.
+
+#### 스프링 부트는 자동으로 글로벌 Validator로 등록한다.
+`LocalValidatorFactoryBean` 을 글로벌 Validator로 등록한다. 이 Validator는 @NotNull 같은 애노테이션을
+보고 검증을 수행한다. 이렇게 글로벌 Validator가 적용되어 있기 때문에, @Valid , @Validated 만 적용하면 된다.
+검증 오류가 발생하면, `FieldError` , `ObjectError` 를 생성해서 BindingResult 에 담아준다.
+
+#### 주의!
+다음과 같이 직접 글로벌 Validator를 직접 등록하면 스프링 부트는 Bean Validator를 글로벌 Validator 로 등록
+하지 않는다. 따라서 애노테이션 기반의 빈 검증기가 동작하지 않는다.
+
+#### 검증 순서
+1. `@ModelAttribute` 각각의 필드에 타입 변환 시도
+   1. 성공하면 다음으로
+   2. 실패하면 typeMismatch 로 FieldError 추가
+2. `Validator` 적용
+
+**바인딩에 성공한 필드만 Bean Validation을 적용한다.**
+
+### Bean Validation - 에러 코드
+Bean Validation이 기본으로 제공하는 오류 메시지를 좀 더 자세하게 변경하고 싶으면 어떻게 해야 될까?
+
+Bean Validation을 적용하고 `bindingResult`에 등록된 검증 오류 코드를 보면 애노테이션 이름으로 등록이 된다.
+마치 `typeMismatch`와 유사하다.
+
+`NotBlank`라는 오류 코드를 기반으로 `MessageCodesResolver`를 통해 다양한 메시지 코드가 순서대로 생성되는 예시를 보자.
+
+**NotBlank**
+* NotBlank.item.itemName
+* NotBlank.itemName
+* NotBlank.java.lang.String
+* NotBlank
+
+코드에 맞게 메시지를 등록하면 등록한 메시지가 정상 적용되는 것을 확인할 수 있다.
+
+#### Bean Validation 메시지를 찾는 순서
+1. 생성된 메시지 코드 순서대로 messageSource 에서 메시지 찾기
+2. 애노테이션의 message 속성 사용 @NotBlank(message = "공백! {0}")
+3. 라이브러리가 제공하는 기본 값 사용 -> 공백일 수 없습니다.
+
+### Bean Validation - 오브젝트 오류
+Bean Validation에서 특정 필드(`FieldError`)가 아닌 해당 오브젝트 관련 오류(`ObjectError`)는 어떻게 처리할 수 있을까?
+
+다음과 같이 `@ScriptAssert()` 를 사용하면 된다.
+
+```java
+@Data
+@ScriptAssert(lang = "javascript", script = "_this.price * _this.quantity >= 10000")
+public class Item {
+  ...
+}
+```
+
+#### 메시지 코드
+* ScriptAssert.item
+* ScriptAssert
+
+실제 오브젝트 오류의 경우 `@ScriptAssert`을 억지로 사용하는 것 보다는 다음과 같이 오브젝트 오류 관련 부분만 직접 자바 코드로 작성하는 것을 권장한다.
+
+```java
+@PostMapping("/add")
+public String addItem(@Validated @ModelAttribute Item item, BindingResult
+bindingResult, RedirectAttributes redirectAttributes) {
+ //특정 필드 예외가 아닌 전체 예외
+ if (item.getPrice() != null && item.getQuantity() != null) {
+    int resultPrice = item.getPrice() * item.getQuantity();
+    if (resultPrice < 10000) {
+    bindingResult.reject("totalPriceMin", new Object[]{10000, resultPrice}, null);
+    }
+ }
+ if (bindingResult.hasErrors()) {
+    log.info("errors={}", bindingResult);
+    return "validation/v3/addForm";
+ }
+ //성공 로직
+ Item savedItem = itemRepository.save(item);
+ redirectAttributes.addAttribute("itemId", savedItem.getId());
+ redirectAttributes.addAttribute("status", true);
+ return "redirect:/validation/v3/items/{itemId}";
+}
+```
+
+### Bean Validation - groups
+동일한 모델 객체를 등록할 때와 수정할 때 각각 다르게 검증하는 방법을 알아보자.
+
+#### 방법 2가지
+- Bean Validation의 groups 기능을 사용한다.
+- Item을 직접 사용하지 않고, ItemSaveForm, ItemUpdateForm 같은 폼 전송을 위한 별도의 모델 객체를 만들
+어서 사용한다.
+
+#### Bean Validation groups 기능 사용
+이런 문제를 해결하기 위해 Bean Validation은 `groups`라는 기능을 제공한다.
+
+예를 들어서 등록시에 검증할 기능과 수정시에 검증할 기능을 각각 그룹을 나누어 적용할 수 있다.
+
+#### groups 적용
+```java
+public interface SaveCheck {
+}
+
+public interface UpdateCheck {
+}
+
+@Data
+public class Item {
+  @NotNull(groups = UpdateCheck.class) //수정시에만 적용
+  private Long id;
+  
+  @NotBlank(groups = {SaveCheck.class, UpdateCheck.class})
+  private String itemName;
+  
+  @NotNull(groups = {SaveCheck.class, UpdateCheck.class})
+  @Range(min = 1000, max = 1000000, groups = 
+          {SaveCheck.class, UpdateCheck.class})
+  private Integer price;
+  
+  @NotNull(groups = {SaveCheck.class, UpdateCheck.class})
+  @Max(value = 9999, groups = SaveCheck.class) //등록시에만 적용
+  private Integer quantity;
+  
+  public Item() {
+  }
+  
+  public Item(String itemName, Integer price, Integer quantity) {
+    this.itemName = itemName;
+    this.price = price;
+    this.quantity = quantity;
+  }
+}
+
+@PostMapping("/add") //저장
+public String addItemV2(@Validated(SaveCheck.class) @ModelAttribute Item item,
+                        BindingResult bindingResult, RedirectAttributes redirectAttributes) {
+  //...
+}
+
+@PostMapping("/{itemId}/edit") //수정
+public String editV2(@PathVariable Long itemId, @Validated(UpdateCheck.class)
+@ModelAttribute Item item, BindingResult bindingResult) {
+  //...
+}
+```
+
+사실 `groups` 기능은 실제 잘 적용되지는 않는다. 그 이유는 실무에서는 주로 등록용 폼 객체와 수정용 폼 객체를 분리해서 사용하기 때문이다.
+
+### Bean Validation - HTTP 메시지 컨버터
+`@Valid` , `@Validated` 는 `HttpMessageConverter` (`@RequestBody`)에도 적용할 수 있다.
+
+`@ModelAttribute`는 HTTP 요청 파라미터(URL 쿼리 스트링, POST Form)를 다룰 때 사용한다.
+
+`@RequestBody`는 HTTP Body의 데이터를 객체로 변환할 때 사용한다. 주로 API JSON 요청을 다룰 때 사용한다.
+
+**API의 경우 3가지 경우를 나누어 생각해야 한다.**
+* 성공 요청: 성공
+* 실패 요청: JSON을 객체로 생성하는 것 자체가 실패함
+* 검증 오류 요청: JSON을 객체로 생성하는 것은 성공했고, 검증에서 실패함
+
+#### @ModelAttribute vs @RequestBody
+HTTP 요청 파라미터를 처리하는 `@ModelAttribute`는 각각의 필드 단위로 세밀하게 적용된다. 그래서 특정 필드에 타입이 맞지 않는 오류가 발생해도 나머지 필드는 정상 처리할 수 있었다.
+
+`HttpMessageConverter` 는 `@ModelAttribute` 와 다르게 각각의 필드 단위로 적용되는 것이 아니라, 전체 객체
+단위로 적용된다.
+
+따라서 메시지 컨버터의 작동이 성공해서 `ItemSaveForm` 객체를 만들어야 `@Valid`, `@Validated` 가 적용된다.
+
