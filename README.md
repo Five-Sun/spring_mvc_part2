@@ -1078,3 +1078,221 @@ HTTP 요청 파라미터를 처리하는 `@ModelAttribute`는 각각의 필드 �
 
 따라서 메시지 컨버터의 작동이 성공해서 `ItemSaveForm` 객체를 만들어야 `@Valid`, `@Validated` 가 적용된다.
 
+## 6. 로그인 처리1 - 쿠키, 세션
+
+### 로그인 처리하기 - 쿠키 사용
+쿠키를 사용해서 로그인, 로그아웃 기능을 구현해보자.
+
+서버에서 로그인에 성공하면 HTTP 응답에 쿠키를 담아서 브라우저에 전달하면 앞으로 해당 쿠키를 지속해서 보내준다.
+
+#### 로그인 상태 유지하기
+![img.png](img/img_5.png)
+![img_1.png](img/img_6.png)
+
+#### 쿠키에는 영속 쿠키와 세션 쿠키가 있다.
+* 영속 쿠키: 만료 날짜를 입력하면 해당 날짜까지 유지
+* 세션 쿠키: 만료 날짜를 생략하면 브라우저 종료시 까지만 유지
+
+로그인 성공시 세션 쿠키를 생성하자.
+```java
+@PostMapping("/login")
+public String login(@Valid @ModelAttribute LoginForm form, BindingResult
+bindingResult, HttpServletResponse response) {
+  if (bindingResult.hasErrors()) {
+    return "login/loginForm";
+  }
+  
+  Member loginMember = loginService.login(form.getLoginId(),
+  form.getPassword());
+  log.info("login? {}", loginMember);
+  
+  if (loginMember == null) {
+    bindingResult.reject("loginFail", "아이디 또는 비밀번호가 맞지 않습니다.");
+    return "login/loginForm";
+  }
+  //로그인 성공 처리
+  //쿠키에 시간 정보를 주지 않으면 세션 쿠키(브라우저 종료시 모두 종료)
+  Cookie idCookie = new Cookie("memberId",
+          String.valueOf(loginMember.getId()));
+  response.addCookie(idCookie);
+  return "redirect:/";
+}
+```
+
+#### 홈 - 로그인 처리
+```java
+@Slf4j
+@Controller
+@RequiredArgsConstructor
+public class HomeController {
+  @GetMapping("/")
+  public String homeLogin(@CookieValue(name = "memberId", required = false) Long memberId,
+          Model model) {
+    if (memberId == null) {
+      return "home";
+    }
+    //로그인
+    Member loginMember = memberRepository.findById(memberId);
+    if (loginMember == null) {
+      return "home";
+    }
+    
+    model.addAttribute("member", loginMember);
+    return "loginHome";
+  }
+}
+```
+로그인 쿠키(memberId)가 없는 사용자는 기존 `home`으로 보낸다. 추가로 로그인 쿠키가 있어도 회원이 없으면 `home`으로 보낸다.
+
+#### 로그아웃 기능
+```java
+@PostMapping("/logout")
+public String logout(HttpServletResponse response) {
+ expireCookie(response, "memberId");
+ return "redirect:/";
+}
+private void expireCookie(HttpServletResponse response, String cookieName) {
+ Cookie cookie = new Cookie(cookieName, null);
+ cookie.setMaxAge(0);
+ response.addCookie(cookie);
+}
+```
+
+로그아웃도 응답 쿠키를 생성하는데 `Max-Age=0`으로 해당 쿠키는 즉시 종료된다.
+
+### 쿠키와 보안 문제
+쿠키를 사용해서 `memberId` 를 전달해서 로그인을 유지할 수 있었다. 그런데 여기에는 심각한 보안 문제가 있다.
+
+#### 보안 문제
+- 쿠키 값은 임의로 변경할 수 있다.
+  - 클라이언트가 쿠키를 강제로 변경하면 다른 사용자가 된다.
+  - 웹브라우저 개발자모드 -> Application -> Cookie 변경
+- 쿠키에 보관된 정보는 훔쳐갈 수 있다.
+- 해커가 쿠키를 한번 훔쳐가면 평생 사용할 수 있다.
+
+#### 대안
+- 쿠키에 중요한 값을 노출하지 않고, 사용자 별로 예측 불가능한 임의의 토큰을 노출하고 서버에서 토큰과 사용자 id를 매핑해서 인식한다. 그리고 서버에서 토큰을 관리한다.
+- 토큰은 해커가 임의의 값을 넣어도 찾을 수 없도록 예상 불가능 해야 한다.
+- 해커가 토큰을 털어가도 시간이 지나면 사용할 수 없도록 서버에서 해당 토큰의 만료시간을 짧게 유지한다.
+
+### 로그인 처리하기 - 세션 동작 방식
+앞서 쿠키에서 발생하는 여러가지 보안 이슈를 해결하려면 결국 중요한 정보를 모두 서버에 저장해야 한다.
+그리고 클라이언트와 서버는 추정 불가능한 임의의 식별자 값으로 연결해야 한다.
+
+이렇게 서버에 중요한 정보를 보관하고 연결을 유지하는 방법을 세션이라 한다.
+
+#### 세션 동작 방식
+![img_2.png](img/img_2.png)
+![img_3.png](img/img_3.png)
+![img_4.png](img/img_4.png)
+
+### 로그인 처리하기 - 서블릿 HTTP 세션1
+세션이라는 개념은 대부분의 웹 애플리케이션에 필요한 것이다.
+어쩌면 웹이 등장하면서 부터 나온 문제이다.
+서블릿은 세션을 위해 `HttpSession`이라는 기능을 제공하는데 지금까지 나온 문제들을 해결해준다.
+
+#### HttpSession 소개
+서블릿이 제공하는 `HttpSession`는 서블릿을 통해  생성하고 다음과 같은 쿠키를 생성한다.
+쿠키 이름이 `JSESSIONID`이고, 값은 추정 불가능ㅎ나 랜덤 값이다.
+
+`Cookie: JSESSIONID=5B78E23B513F50164D6FDD8C97B0AD05`
+
+#### HttpSession 사용
+````java
+//세션이 있으면 있는 세션 반환, 없으면 신규 세션 생성
+ HttpSession session = request.getSession();
+ //세션에 로그인 회원 정보 보관
+ session.setAttribute(SessionConst.LOGIN_MEMBER, loginMember);
+````
+
+#### 세션 생성과 조회
+* request.getSession(true)
+  * 세션이 있으면 기존 세션을 반환한다.
+  * 세션이 없으면 새로운 세션을 생성해서 반환한다.
+* request.getSession(false)
+  * 세션이 있으면 기존 세션을 반환한다.
+  * 세션이 없으면 새로운 세션을 생성하지 않는다. null 을 반환한다.
+
+### 로그인 처리하기 - 서블릿 HTTP 세션2
+
+#### @SessionAttribute
+스프링은 세션을 더 편리하게 사용할 수 있도록 `@SessionAttribute`를 지원한다.
+이미 로그인 된 사용자를 찾을 때는 다음과 같이 사용하면 된다. 참고로 이 기능은 세션을 생성하지 않는다.
+
+`@SessionAttribute(name = "loginMember", required = false) Member loginMember`
+```java
+@GetMapping("/")
+public String homeLoginV3Spring(@SessionAttribute(name = SessionConst.LOGIN_MEMBER, required = false),
+                                Member loginMember, Model model) {
+ //세션에 회원 데이터가 없으면 home
+ if (loginMember == null) {
+ return "home";
+ }
+ //세션이 유지되면 로그인으로 이동
+ model.addAttribute("member", loginMember);
+ return "loginHome";
+}
+```
+이렇게 되면 세션을 찾고, 세션에 들어있는 데이터를 찾는 번거로운 과정을 스프링이 한번에 편리하게 처리해주는 것을 확인할 수 있다.
+
+#### TrackingModes
+로그인을 처음 시도하면 URL이 다음과 같이 `jseesionid`를 포함하고 있는 것을 확인할 수 있다.
+
+`http://localhost:8080/;jsessionid=F59911518B921DF62D09F0DF8F83F872`
+
+이것은 웹브라우저가 쿠키를 지원하지 않을 때 쿠키 대신 URL을 통해서 세션을 유지하는 방법이다. 
+이 방법을 사용하려면 URL에 이 값을 계속포함해서 전달해야 한다.
+타임리프 같은 템플릿은 엔진을 통해서 링크를 걸면 jessionid를 URL에 자동으로 포함해준다.
+서버 입장에서 웹 브라우저가 쿠키를 지원하는지 않는지 최초에는 판단하지 못하므로, 쿠키 값도 전달하고, URL에 `jsessionid`도 함께 전달한다.
+
+**최근 URL 매핑 전량이 변경 되어 `jsessionid`를 포함하는 경우 출력될 때 컨트롤러를 찾지 못하고 404 오류가 발생할 수 있다.**
+
+URL 전달 방식을 끄고 항상 쿠키를 통해서만 세션을 유지하고 싶으면 `application.properties`에 다음 옵션을 넣어주면 된다. 이렇게 하면 URL에
+jsessionid 가 노출되지 않는다.
+
+`server.servlet.session.tracking-modes=cookie`
+
+만약 URL에 `jsessionid`가 꼭 필요하다면 `application.properties`에 다음 옵션을 추가하면 된다.
+
+`spring.mvc.pathmatch.matching-strategy=ant_path_matcher`
+
+### 세션 정보와 타임아웃 설정
+
+#### 세션이 제공하는 정보들
+* `sessionId` : 세션Id, JSESSIONID 의 값이다. 예) 34B14F008AA3527C9F8ED620EFD7A4E1
+* `maxInactiveInterval` : 세션의 유효 시간, 예) 1800초, (30분)
+* `creationTime` : 세션 생성일시
+* `lastAccessedTime` : 세션과 연결된 사용자가 최근에 서버에 접근한 시간, 클라이언트에서 서버로
+* `sessionId` ( JSESSIONID )를 요청한 경우에 갱신된다.
+* `isNew` : 새로 생성된 세션인지, 아니면 이미 과거에 만들어졌고, 클라이언트에서 서버로 sessionId (JSESSIONID)를 요청해서 조회된 세션인지 여부
+
+#### 세션 타임아웃 설정
+세션은 사용자가 로그아웃을 직접 호출해서 `session.invalidate()` 가 호출 되는 경우에 삭제된다. 
+그런데 대부분의 사용자는 로그아웃을 선택하지 않고, 그냥 웹 브라우저를 종료한다. 
+문제는 HTTP가 비 연결성(ConnectionLess)이므로 서버 입장에서는 해당 사용자가 웹 브라우저를 종료한 것인지 아닌지를 인식할 수 없다. 
+따라서 서버에서 세션 데이터를 언제 삭제해야 하는지 판단하기가 어렵다.
+
+이 경우 남아있는 세션을 무한정 보관하면 다음과 같은 문제가 발생할 수 있다.
+* 세션과 관련된 쿠키( JSESSIONID )를 탈취 당했을 경우 오랜 시간이 지나도 해당 쿠키로 악의적인 요청을 할 수 있다.
+* 세션은 기본적으로 메모리에 생성된다. 메모리의 크기가 무한하지 않기 때문에 꼭 필요한 경우만 생성해서 사용해야 한다. 10만명의 사용자가 로그인하면 10만개의 세션이 생성되는 것이다.
+
+스프링 부트로 글로벌 설정(application.properties)
+
+`server.servlet.session.timeout=60 : 60초, 기본은 1800(30분)`
+
+특정 세션 단위로 시간 설정
+
+`session.setMaxInactiveInterval(1800); //1800초 `
+
+세션 타임아웃 시간은 해당 세션과 관련된 `JSESSIONID`를 전달하는 HTTP 요청이 있으면 현재 시간으로 다시 초기화 된다.
+`LastAccessedTime` 이후로 timeout시간이 지나면, WAS가 내부에서 해당 세션을 제거한다.
+
+#### 정리
+서블릿의 HttpSession 이 제공하는 타임아웃 기능 덕분에 세션을 안전하고 편리하게 사용할 수 있다. 
+실무에서 주의할 점은 세션에는 최소한의 데이터만 보관해야 한다는 점이다. 
+보관한 데이터 용량 * 사용자 수로 세션의 메모리 사용량이 급격하게 늘어나서 장애로 이어질 수 있다. 
+추가로 세션의 시간을 너무 길게 가져가면 메모리 사용이 계속 누적 될 수 있으므로 적당한 시간을 선택하는 것이 필요하다. 
+기본이 30분이라는 것을 기준으로 고민하면 된다.
+
+
+
