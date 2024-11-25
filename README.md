@@ -1419,8 +1419,8 @@ default void afterCompletion(HttpServletRequest request, HttpServletResponse
 }
 ```
 #### 스프링 인터셉터 호출 흐름
-![img.png](img.png)
-![img_1.png](img_1.png)
+![img.png](img/img_7.png)
+![img_1.png](img/img_8.png)
 
 #### 인터셉터 생성
 ```java
