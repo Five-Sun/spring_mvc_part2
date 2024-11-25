@@ -1294,5 +1294,224 @@ jsessionid 가 노출되지 않는다.
 추가로 세션의 시간을 너무 길게 가져가면 메모리 사용이 계속 누적 될 수 있으므로 적당한 시간을 선택하는 것이 필요하다. 
 기본이 30분이라는 것을 기준으로 고민하면 된다.
 
+## 7. 로그인 처리2 - 필터, 인터셉터
 
+### 서블릿 필터 - 소개
+필터는 서블릿이 지원하는 수문장이다.
+
+#### 공통 관심 사항
+로그인 여부를 체크하는 로직을 하나하나 작성할 수도 있지만 모든 컨트롤러 로직에 공통으로 로그인 여부를 확인해야 한다.
+더 큰 문제는 향후 로그인과 관련된 로직이 변경되면 모든 로직을 다 수정해야 할 수도 있다.
+
+이렇게 애플리케이션 여러 로직에서 공통으로 관심이 있는 것을 공통 관심사(cross-cutting concern)라고 한다.
+
+이러한 공통 관심사는 스프링의 AOP로도 해결할 수 있지만, 웹과 관련된 공통 관심사는 지금부터 설명할 서블릿 필터
+또는 스프링 인터셉터를 사용하는 것이 좋다. 웹과 관련된 공통 관심사를 처리할 때는 HTTP의 헤더나 URL의 정보들
+이 필요한데, 서블릿 필터나 스프링 인터셉터는 `HttpServletRequest` 를 제공한다.
+
+#### 필터 흐름
+`HTTP 요청 -> WAS -> 필터 -> 서블릿 -> 컨트롤러`
+
+필터를 적용하면 필터가 호출 된 다음에 서블릿이 호출된다. 
+그래서 모든 고객의 요청 로그를 남기는 요구사항이 있다면 필터를 사용하면 된다.
+참고로 필터는 특정 URL 패턴에 적용할 수 있다.
+`/*`이라고 하면 모든 요청에 필터가 적용된다.
+참고로 스프링을 사용하는 경우 여기서 말하는 서블릿은 스프링의 디스패처 서블릿으로 생각하면 된다.
+
+#### 필터 제한
+`HTTP 요청 -> WAS -> 필터 -> 서블릿 -> 컨트롤러 //로그인 사용자`
+
+`HTTP 요청 -> WAS -> 필터(적절하지 않은 요청이라 판단, 서블릿 호출X) //비 로그인 사용자`
+
+#### 필터 체인
+`HTTP 요청 -> WAS -> 필터1 -> 필터2 -> 필터3 -> 서블릿 -> 컨트롤러`
+
+#### 필터 인터페이스
+```java
+public interface Filter {
+  public default void init(FilterConfig filterConfig) throws ServletException
+  {}
+  public void doFilter(ServletRequest request, ServletResponse response, 
+                       FilterChain chain) throws IOException, ServletException;
+  public default void destroy() {}
+}
+```
+#### 필터 생성
+```java
+@Slf4j
+public class LoginCheckFilter implements Filter {
+  private static final String[] whitelist = {"/", "/members/add", "/login", "/logout","/css/*"};
+  
+  @Override
+  public void doFilter(ServletRequest request, ServletResponse response, 
+                       FilterChain chain) throws IOException, ServletException {
+    HttpServletRequest httpRequest = (HttpServletRequest) request;
+    String requestURI = httpRequest.getRequestURI();
+    HttpServletResponse httpResponse = (HttpServletResponse) response;
+    try {
+        log.info("인증 체크 필터 시작 {}", requestURI);
+      if (isLoginCheckPath(requestURI)) {
+        log.info("인증 체크 로직 실행 {}", requestURI);
+        HttpSession session = httpRequest.getSession(false);
+        if (session == null || session.getAttribute(SessionConst.LOGIN_MEMBER) == null) {
+          log.info("미인증 사용자 요청 {}", requestURI);
+          //로그인으로 redirect
+          httpResponse.sendRedirect("/login?redirectURL=" + requestURI);
+          return; //여기가 중요, 미인증 사용자는 다음으로 진행하지 않고 끝!
+        }
+      }
+    chain.doFilter(request, response);
+    } catch (Exception e) {
+      throw e; //예외 로깅 가능 하지만, 톰캣까지 예외를 보내주어야 함
+    } finally {
+      log.info("인증 체크 필터 종료 {}", requestURI);
+    }
+  }
+  /**
+  * 화이트 리스트의 경우 인증 체크X
+  */
+  private boolean isLoginCheckPath(String requestURI) {
+    return !PatternMatchUtils.simpleMatch(whitelist, requestURI);
+  }
+}
+```
+#### 필터 추가 - WebConfig
+```java
+@Bean
+public FilterRegistrationBean loginCheckFilter() {
+  FilterRegistrationBean<Filter> filterRegistrationBean = new FilterRegistrationBean<>();
+  filterRegistrationBean.setFilter(new LoginCheckFilter());
+  filterRegistrationBean.setOrder(2);
+  filterRegistrationBean.addUrlPatterns("/*");
+  return filterRegistrationBean;
+}
+```
+
+### 스프링 인터셉터 - 소개
+
+스프링 인터셉터도 서블릿 필터와 같이 웹과 관련된 공통 관심 사항을 효과적으로 해결할 수 있는 기술이다.
+
+서블릿 필터가 서블릿이 제공하는 기술이라면, 스프링 인터셉트는 스프링 MVC가 제공하는 기술이다. 둘다 웹과 관련된 공통 관심 사항을 처리하지만, 적용되는 순서와 범위, 그리고 사용방법이 다르다.
+
+#### 스프링 인터셉터 흐름
+`HTTP 요청 -> WAS -> 필터 -> 서블릿 -> 스프링 인터셉터 -> 컨트롤러`
+* 스프링 인터셉터는 디스패처 서블릿과 컨트롤러 사이에서 컨트롤러 호출 직전에 호출 된다.
+* 스프링 인터셉터는 스프링 MVC가 제공하는 기능이기 때문에 결국 디스패처 서블릿 이후에 등장하게 된다. 스프링 MVC의 시작점이 디스패처 서블릿이라고 생각해보면 이해가 될 것이다.
+* 스프링 인터셉터에도 URL 패턴을 적용할 수 있는데, 서블릿 URL 패턴과는 다르고, 매우 정밀하게 설정할 수 있다.
+
+#### 스프링 인터셉터 제한
+`HTTP 요청 -> WAS -> 필터 -> 서블릿 -> 스프링 인터셉터 -> 컨트롤러 //로그인 사용자`
+
+`HTTP 요청 -> WAS -> 필터 -> 서블릿 -> 스프링 인터셉터(적절하지 않은 요청이라 판단, 컨트롤러 호출X) // 비 로그인 사용자`
+
+#### 스프링 인터셉터 체인
+`HTTP 요청 -> WAS -> 필터 -> 서블릿 -> 인터셉터1 -> 인터셉터2 -> 컨트롤러 `
+
+#### 스프링 인터셉터 인터페이스
+```java
+public interface HandlerInterceptor {
+default boolean preHandle(HttpServletRequest request, HttpServletResponse response, 
+                          Object handler) throws Exception {}
+default void postHandle(HttpServletRequest request, HttpServletResponse response, 
+                        Object handler, @Nullable ModelAndView modelAndView) throws Exception {}
+default void afterCompletion(HttpServletRequest request, HttpServletResponse 
+        response, Object handler, @Nullable Exception ex) throws Exception {}
+}
+```
+#### 스프링 인터셉터 호출 흐름
+![img.png](img.png)
+![img_1.png](img_1.png)
+
+#### 인터셉터 생성
+```java
+@Slf4j
+public class LoginCheckInterceptor implements HandlerInterceptor {
+  @Override
+  public boolean preHandle(HttpServletRequest request, 
+                           HttpServletResponse response, Object handler) throws Exception {
+    String requestURI = request.getRequestURI();
+    log.info("인증 체크 인터셉터 실행 {}", requestURI);
+    HttpSession session = request.getSession(false);
+    if (session == null || session.getAttribute(SessionConst.LOGIN_MEMBER) == null) {
+      log.info("미인증 사용자 요청");
+      //로그인으로 redirect
+      response.sendRedirect("/login?redirectURL=" + requestURI);
+      return false;
+    }
+    return true;
+  }
+}
+```
+
+#### 인터셉터 등록 - 순서 주의, 세밀한 설정 가능
+```java
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+  @Override
+  public void addInterceptors(InterceptorRegistry registry) {
+    registry.addInterceptor(new LogInterceptor())
+        .order(1)
+        .addPathPatterns("/**")
+        .excludePathPatterns("/css/**", "/*.ico", "/error");
+    registry.addInterceptor(new LoginCheckInterceptor())
+        .order(2)
+        .addPathPatterns("/**")
+        .excludePathPatterns(
+            "/", "/members/add", "/login", "/logout",
+            "/css/**", "/*.ico", "/error"
+        );
+    }
+  //...
+}
+```
+
+서블릿 필터와 스프링 인텃베터는 웹과 관련된 공통 관심사를 해결하기 위한 기술이다.
+
+서블릿 필터와 비교해서 스프링 인터셉터가 개발자 입장에서 훨씬 편리하다는 것을 코드로 이해했을 것이다.
+특별한 문제가 없다면 인터셉터를 사용하는 것이 좋다.
+
+### ArgumentResolver 활용
+MVC1편 6. 스프링 MVC - 기본 기능 요청 매핑 헨들러 어뎁터 구조에서 ArgumentResolver 를 학습했다.
+이번 시간에는 해당 기능을 사용해서 로그인 회원을 조금 편리하게 찾아보자.
+
+`@Login` 애노테이션이 있으면 직접 만든 `ArgumentResolver` 가 동작해서 자동으로 세션에 있는 로그인 회원을 찾
+아주고, 만약 세션에 없다면 null 을 반환하도록 개발해보자.
+
+#### @Login 애노테이션 생성
+```java
+@Target(ElementType.PARAMETER)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Login {
+}
+```
+
+#### LoginMemberArgumentResolver 생성
+```java
+@Slf4j
+public class LoginMemberArgumentResolver implements HandlerMethodArgumentResolver {
+  @Override
+  public boolean supportsParameter(MethodParameter parameter) {
+    log.info("supportsParameter 실행");
+    boolean hasLoginAnnotation = parameter.hasParameterAnnotation(Login.class);
+    boolean hasMemberType = Member.class.isAssignableFrom(parameter.getParameterType());
+    return hasLoginAnnotation && hasMemberType;
+  }
+  @Override
+  public Object resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
+                                NativeWebRequest webRequest, WebDataBinderFactory binderFactory) throws Exception {
+    log.info("resolveArgument 실행");
+    HttpServletRequest request = (HttpServletRequest)
+    webRequest.getNativeRequest();
+    HttpSession session = request.getSession(false);
+    if (session == null) {
+      return null;
+    }
+    return session.getAttribute(SessionConst.LOGIN_MEMBER);
+  }
+}
+```
+* `supportsParameter()` : @Login 애노테이션이 있으면서 Member 타입이면 해당 ArgumentResolver 가 사용된다.
+* `resolveArgument()` : 컨트롤러 호출 직전에 호출 되어서 필요한 파라미터 정보를 생성해준다. 여기서는 세션에 있는 로그인 회원 정보인 member 객체를 찾아서 반환해준다. 이후 스프링MVC는 컨트롤러의 메서드를 호출 하면서 여기에서 반환된 member 객체를 파라미터에 전달해준다.
+
+실행해보면, 결과는 동일하지만, 더 편리하게 로그인 회원 정보를 조회할 수 있다. 이렇게 ArgumentResolver 를 활용하면 공통 작업이 필요할 때 컨트롤러를 더욱 편리하게 사용할 수 있다.
 
