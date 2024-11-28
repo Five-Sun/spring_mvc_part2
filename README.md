@@ -1957,3 +1957,221 @@ public class ExampleAdvice3 {}
 
 `@ExceptionHandler` 와 `@ControllerAdvice` 를 조합하면 예외를 깔끔하게 해결할 수 있다.
 
+## 10. 스프링 타입 컨버터
+
+### 스프링 타입 컨버터 소개
+문자를 숫자로 변환하거나, 반대로 숫자를 문자로 변환해야 하는 것 처럼 애플리케이션을 개발하다 보면 타입을 변환해야 하는 경우가 상당히 많다.
+
+HTTP 요청 파라미터는 모두 문자로 처리된다. 따라서 요청 파라미터를 자바에서 다른 타입으로 변환해서 사용하고 싶으면 변환하는 과정을 거쳐야 한다.
+
+스프링이 제공하는 `@RequestParam` 을 사용하면 이 문자 10을 Integer 타입의 숫자 10으로 편리하게 받을 수 있다.
+
+이것은 스프링이 중간에서 타입을 변환해주었기 때문이다.
+
+`@RequestParam`과 같이 `@ModelAttribute`, `@PathVariable` 역시 스프링이 타입 변환을 해준다.
+
+#### 스프링과 타입 변환
+이렇게 타입을 변환해야 하는 경우는 상당히 많다. 개발자가 직접 하나하나 타입 변환을 해야 한다면, 생각만 해도 괴로울 것이다.
+스프링이 중간에 타입 변환기를 사용해서 타입을 `String` -> `Integer` 등과 같이 변환해주었기 때문에 개발자는 편리하게 해당 타입을 바로 받을 수 있다.
+만약 개발자가 새로운 타입을 만들어서 변환하고 싶으면 어떻게 하면 될까?
+
+#### 컨버터 인터페이스
+```java
+package org.springframework.core.convert.converter;
+
+public interface Converter<S, T> {
+    T convert(S source);
+}
+```
+스프링은 확장 가능한 컨버터 인터페이스를 제공한다. 개발자는 스프링에 추가적인 타입 변환이 필요하면 이 컨버터 인터페이스를 구현해서 등록하면 된다.
+
+### 타입 컨버터 - Converter
+
+#### StringToIntegerConverter - 문자 -> 숫자
+```java
+@Slf4j
+public class StringToIntegerConverter implements Converter<String, Integer> {
+    @Override
+    public Integer convert(String source) {
+        log.info("convert source={}", source);
+        return Integer.valueOf(source);
+    }
+}
+```
+
+#### IntegerToStringConverter - 숫자 -> 문자
+```java
+@Slf4j
+public class IntegerToStringConverter implements Converter<Integer, String> {
+    @Override
+    public String convert(Integer source) {
+        log.info("convert source={}", source);
+        return String.valueOf(source);
+    }
+}
+```
+
+### 컨버전 서비스 - ConversionService
+타입 컨버터를 하나하나 직접 찾아서 타입 변환에 사용하는 것은 매우 불편하다.
+그래서 스프링은 개별 컨버터를 모아두고 그것을 묶어서 편리하게 사용할 수 있는 기능을 제공하는데, 이것이 바로 컨버전 서비스이다.
+
+#### ConversionService 인터페이스
+```java
+public interface ConversionService {
+    boolean canConvert(@Nullable Class<?> sourceType, Class<?> targetType);
+
+    boolean canConvert(@Nullable TypeDescriptor sourceType, TypeDescriptor
+            targetType);
+
+    <T> T convert(@Nullable Object source, Class<T> targetType);
+
+    Object convert(@Nullable Object source, @Nullable TypeDescriptor sourceType,
+                   TypeDescriptor targetType);
+}
+```
+컨버전 서비스 인터페이스는 단순히 컨버팅이 가능한가? 확인하는 기능과, 컨버팅 기능을 제공한다.
+
+#### 사용 예시
+```java
+public class ConversionServiceTest {
+    @Test
+    void conversionService() {
+        //등록
+        DefaultConversionService conversionService = new
+                DefaultConversionService();
+        conversionService.addConverter(new StringToIntegerConverter());
+        conversionService.addConverter(new IntegerToStringConverter());
+        conversionService.addConverter(new StringToIpPortConverter());
+        conversionService.addConverter(new IpPortToStringConverter());
+        //사용
+        assertThat(conversionService.convert("10", Integer.class)).isEqualTo(10);
+        assertThat(conversionService.convert(10, String.class)).isEqualTo("10");
+        
+        IpPort ipPort = conversionService.convert("127.0.0.1:8080", IpPort.class);
+        assertThat(ipPort).isEqualTo(new IpPort("127.0.0.1", 8080));
+
+        String ipPortString = conversionService.convert(new IpPort("127.0.0.1", 8080), String.class);
+        assertThat(ipPortString).isEqualTo("127.0.0.1:8080");
+    }
+}
+```
+##### 등록과 사용 분리
+컨버터를 등록할 때는 타입 컨버터를 명확하게 알아야 한다. 반면에 사용하는 입장에서는 타입 컨버터를 전혀 몰라도 된다.
+타입 컨버터들은 모두 컨버전 서비스 내부에 숨어서 제공된다. 따라서 타입을 변환을 원하는 사용자는 컨버전 서비스 인터페이스에만 의존하면 된다.
+물론 컨버전 서비스를 등록하는 부분과 사용하는 부분을 분리하고 의존관계 주입을 사용해야 한다.
+
+##### 인터페이스 분리 원칙 - ISP(Interface Segregation Principle)
+`DefaultConversionService` 는 다음 두 인터페이스를 구현했다.
+* `ConversionService` : 컨버터 사용에 초점
+* `ConverterRegistry` : 컨버터 등록에 초점
+
+### 스프링에 Converter 적용하기
+```java
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+    @Override
+    public void addFormatters(FormatterRegistry registry) {
+        registry.addConverter(new StringToIntegerConverter());
+        registry.addConverter(new IntegerToStringConverter());
+        registry.addConverter(new StringToIpPortConverter());
+        registry.addConverter(new IpPortToStringConverter());
+    }
+}
+```
+#### 처리 과정
+`@RequestParam` 은 `@RequestParam` 을 처리하는 `ArgumentResolver` 인
+`RequestParamMethodArgumentResolver` 에서 `ConversionService` 를 사용해서 타입을 변환한다.
+
+### 뷰 템플릿에 컨버터 적용하기
+타임리프는 `${{...}}`를 사용하면 자동으로 컨버전 서비스를 사용해서 변환된 결과를 출력해준다. 물론 스프링과 통합 되어서 스프링이 제공하는 컨버전 서비스를 사용하므로, 우리가 등록한 컨버터들을 사용할 수 있다.
+
+* 변수 표현식 : `${...}`
+* 컨버전 서비스 적용 : `${{...}}`
+
+타임리프의 `th:field` 는 앞서 설명했듯이 `id` , `name` 를 출력하는 등 다양한 기능이 있는데, 여기에 컨버전 서비스
+도 함께 적용된다.
+
+### 포맷터 - Formatter
+`Converter` 는 입력과 출력 타입에 제한이 없는, 범용 타입 변환 기능을 제공한다.
+보통 문자를 다른 타입으로 변환하거나, 다른 타입을 문자로 변환하는 상황이 대부분이다.
+
+#### Converter vs Formatter
+- `Converter`는 범용(객체 -> 객체)
+- `Formatter`는 문자에 특화(객체 -> 문자, 문자 -> 객체) + 현지화(Locale)
+  - `Converter`의 특별한 버전
+
+#### 포맷터 - Formatter 만들기
+포맷터는 객체를 문자로 변경하고, 문자를 객체로 변경하는 두 가지 기능을 모두 수행한다.
+* `String print(T object, Locale locale)` : 객체를 문자로 변경한다.
+* `T parse(String text, Locale locale)` : 문자를 객체로 변경한다.
+
+```java
+public interface Printer<T> {
+    String print(T object, Locale locale);
+}
+public interface Parser<T> {
+    T parse(String text, Locale locale) throws ParseException;
+}
+public interface Formatter<T> extends Printer<T>, Parser<T> {
+}
+```
+
+### 포맷터를 지원하는 컨버전 서비스
+컨버전 서비스에는 컨버터만 등록할 수 있고, 포맷터는 등록할 수는 없다. 그런데 생각해보면 포맷터는 특별한 컨버터일 뿐이다.
+
+포맷터를 지원하는 컨버전 서비스를 사용하면 컨버전 서비스에 포맷터를 추가할 수 있다. 내부에서 어댑터 패턴을 사용해서 `Formatter`가 `Converter`처럼 동작하도록 지원한다.
+
+`FormattingConversionService` 는 포맷터를 지원하는 컨버전 서비스이다.
+
+`DefaultFormattingConversionService` 는 `FormattingConversionService` 에 기본적인 통화, 숫자 관련 몇가지 기본 포맷터를 추가해서 제공한다.
+
+### 포맷터 적용하기
+```java
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+    @Override
+    public void addFormatters(FormatterRegistry registry) {
+        //주석처리 우선순위
+        //registry.addConverter(new StringToIntegerConverter());
+        //registry.addConverter(new IntegerToStringConverter());
+        registry.addConverter(new StringToIpPortConverter());
+        registry.addConverter(new IpPortToStringConverter());
+        //추가
+        registry.addFormatter(new MyNumberFormatter());
+    }
+}
+```
+`MyNumberFormatter` 도 숫자 -> 문자, 문자 -> 숫자로 변경하기 때문에 둘의 기능이 겹친다. 
+우선순위는 컨버터가 우선하므로 포맷터가 적용되지 않고, 컨버터가 적용된다
+
+### 스프링이 제공하는 기본 포맷터
+스프링은 자바에서 기본으로 제공하는 타입들에 대해 수 많은 포맷터를 기본으로 제공한다.
+IDE에서 `Formatter` 인터페이스의 구현 클래스를 찾아보면 수 많은 날짜나 시간 관련 포맷터가 제공되는 것을 확인
+할 수 있다.
+
+스프링은 애노테이션 기반으로 원하는 형식을 지정해서 사용할 수 있는 매우 유용한 포맷터 두 가지를 기본으로 제공한다.
+* `@NumberFormat` : 숫자 관련 형식 지정 포맷터 사용, NumberFormatAnnotationFormatterFactory
+* `@DateTimeFormat` : 날짜 관련 형식 지정 포맷터 사용, Jsr310DateTimeFormatAnnotationFormatterFactory
+
+```java
+@Data
+ static class Form {
+    @NumberFormat(pattern = "###,###")
+    private Integer number;
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime localDateTime;
+}
+```
+
+### 정리
+컨버터를 사용하든, 포맷터를 사용하든 등록 방법은 다르지만, 사용할 때는 컨버전 서비스를 통해서 일관성 있게 사용할 수 있다.
+메시지 컨버터( HttpMessageConverter )에는 컨버전 서비스가 적용되지 않는다.
+특히 객체를 JSON으로 변환할 때 메시지 컨버터를 사용하면서 이 부분을 많이 오해하는데,
+HttpMessageConverter 의 역할은 HTTP 메시지 바디의 내용을 객체로 변환하거나 객체를 HTTP 메시지 바디에 입력하는 것이다.
+예를 들어서 JSON을 객체로 변환하는 메시지 컨버터는 내부에서 Jackson 같은 라이브러리를 사용한다. 
+객체를 JSON으로 변환한다면 그 결과는 이 라이브러리에 달린 것이다. 
+따라서 JSON 결과로 만들어지는 숫자나 날짜 포맷을 변경하고 싶으면 해당 라이브러리가 제공하는 설정을 통해서 포맷을 지정해야 한다. 
+결과적으로 이것은 컨버전 서비스와 전혀 관계가 없다.
+
+컨버전 서비스는 `@RequestParam`, `@ModelAttribute`, `@PathVariable`, 뷰 템플릿 등에서 사용할 수 있다
+
